@@ -226,7 +226,7 @@ class LyceumRunner(tk.Tk):
         super().__init__()
         self.title("Station Lyceum — Test Runner")
         self.configure(bg=C["bg"])
-        self.geometry("920x680")
+        self.geometry("920x780")
         self.minsize(760, 520)
 
         self.weeks        = []
