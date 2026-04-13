@@ -52,40 +52,40 @@ Every week file must define two things at the top level:
 
 ```python
 WEEK_META = {
-    "tab_label":       "Week 3 — Systems Scan",   # shown on the tab
-    "title":           "Week 3: Systems Scan",     # shown in output
-    "description":     "What the student needs to do...",
-    "submission_file": "week3_work.py",            # file in submissions/
+	"tab_label": "Week 3 — Systems Scan",  # shown on the tab
+	"title": "Week 3: Systems Scan",  # shown in output
+	"description": "What the student needs to do...",
+	"submission_file": "week3_work.py",  # file in submissions/
 }
 
 CHALLENGES = [
-    {
-        "id":         "w3c1",           # unique string, used in results.json
-        "title":      "Fix the loop",   # shown in sidebar
-        "mission":    "DIAGNOSTIC — STEP 1",
-        "story_pass": "[ Flavour text shown when all tests pass ]",
-        "tests": [
-            {
-                "call":     "scan(systems)",        # human-readable, shown in output
-                "func":     "scan",                 # actual function name in student's file
-                "args":     [["engine", "life_support"]],
-                "expected": ["engine: OK", "life_support: OK"],
-            },
-        ],
-    },
+	{
+		"id": "w3c1",  # unique string, used in results.json
+		"title": "Fix the loop",  # shown in sidebar
+		"mission": "DIAGNOSTIC — STEP 1",
+		"story_pass": "[ Flavour text shown when all tests pass ]",
+		"tests": [
+			{
+				"call": "scan(systems)",  # human-readable, shown in output
+				"func": "scan",  # actual function name in student's file
+				"args": [["engine", "life_support"]],
+				"expected": ["engine: OK", "life_support: OK"],
+			},
+		],
+	},
 ]
 ```
 
 ### Test case options
 
-| Key            | Required | Description |
-|----------------|----------|-------------|
-| `call`         | yes      | Label shown in the output |
-| `func`         | yes      | Name of the function in the student's file |
-| `args`         | yes      | List of arguments (can be empty list `[]`) |
-| `expected`     | yes      | Exact return value to compare against |
-| `note`         | no       | Extra note shown next to the result |
-| `is_print_test`| no       | If `True`, captures printed output instead of return value. `expected` should then be a list of strings, one per printed line. |
+| Key             | Required | Description                                                                                                                    |
+|-----------------|----------|--------------------------------------------------------------------------------------------------------------------------------|
+| `call`          | yes      | Label shown in the output                                                                                                      |
+| `func`          | yes      | Name of the function in the student's file                                                                                     |
+| `args`          | yes      | List of arguments (can be empty list `[]`)                                                                                     |
+| `expected`      | yes      | Exact return value to compare against                                                                                          |
+| `note`          | no       | Extra note shown next to the result                                                                                            |
+| `is_print_test` | no       | If `True`, captures printed output instead of return value. `expected` should then be a list of strings, one per printed line. |
 
 ---
 
@@ -100,4 +100,4 @@ CHALLENGES = [
 python StationLyceum.py
 ```
 
-Or double-click `runner.py` if your system has Python associated with `.py` files.
+Or double-click `StationLyceum.py` if your system has Python associated with `.py` files.
