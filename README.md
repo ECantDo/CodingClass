@@ -9,14 +9,16 @@ Students code in their own IDE. This tool just runs the tests and shows results.
 
 ```
 lyceum/
-├── runner.py           ← run this to launch the GUI
-├── weeks/              ← teacher drops week*.py files here before class
+├── StationLyceum.py            ← run this to launch the GUI
+├── weeks/                      ← teacher drops week*.py files here before class
+│   ├── week0.py                ← example testing to confirm everything is working
 │   ├── week1.py
 │   └── week2.py
-├── submissions/        ← student puts their work here
+├── submissions/                ← student puts their work here
+│   ├── week0_work.py           ← example program
 │   ├── week1_work.py
 │   └── week2_work.py
-├── results.json        ← auto-created, stores last run results
+├── results.json                ← auto-created, stores last run results
 └── README.md
 ```
 
