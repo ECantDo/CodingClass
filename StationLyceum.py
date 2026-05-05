@@ -112,6 +112,9 @@ def load_student(submit_path: Path):
 # ── static test logic ─────────────────────────────────────────────────────────
 
 def run_one_test(test: dict, student_mod, submit_name: str) -> dict:
+	if test.get("is_interactive_test"):
+		return run_interactive_challenge(test, student_mod, submit_name)
+
 	t = {
 		"call": test.get("call", ""),
 		"note": test.get("note", ""),
@@ -183,6 +186,42 @@ def save_results(data: dict):
 	RESULTS_FILE.write_text(json.dumps(data, indent=2, default=str))
 
 
+# ── interactive challenge runner ──────────────────────────────────────────────
+
+def run_interactive_challenge(test: dict, student_mod, submit_name: str) -> dict:
+	"""
+	Runs a challenge test marked with is_interactive_test=True.
+	The test must supply a 'runner' callable:
+	    runner(student_func) -> (passed: bool, log_lines: list[tuple[tag, text]])
+	This lets week files define fully custom logic (e.g. crack()) while still
+	plugging into the normal CHALLENGES / sidebar / filter system.
+	"""
+	t = {
+		"call": test.get("call", ""),
+		"note": test.get("note", ""),
+		"passed": False,
+		"got": None,
+		"expected": test.get("expected", "(interactive)"),
+		"error": None,
+		"interactive_log": [],  # list of (tag, text) for display
+	}
+	func = getattr(student_mod, test.get("func"), None)
+	if func is None:
+		t["error"] = f"function '{test.get('func')}' not found in {submit_name}"
+		return t
+	runner = test.get("runner")
+	if not callable(runner):
+		t["error"] = "test is missing a 'runner' callable — check the week file"
+		return t
+	try:
+		passed, log_lines = runner(func)
+		t["passed"] = passed
+		t["interactive_log"] = log_lines
+	except Exception:
+		t["error"] = traceback.format_exc(limit=4)
+	return t
+
+
 # ── GUI ───────────────────────────────────────────────────────────────────────
 
 class LyceumRunner(tk.Tk):
@@ -197,6 +236,7 @@ class LyceumRunner(tk.Tk):
 		self.current_week = None  # int index into self.weeks
 		self.all_results = load_results()
 		self._tab_btns = []
+		self._last_tab_key = self.all_results.get("_last_tab")  # stem of last-used week file
 
 		# output buffer: list of (tag, text, ch_id|None)
 		# ch_id links a line to a specific challenge for filtering
@@ -392,7 +432,14 @@ class LyceumRunner(tk.Tk):
 			btn.pack(side="left")
 			self._tab_btns.append(btn)
 
-		self._select_week(0)
+		# restore last-used tab, fall back to 0
+		start_idx = 0
+		if self._last_tab_key:
+			for i, w in enumerate(self.weeks):
+				if w["path"].stem == self._last_tab_key:
+					start_idx = i
+					break
+		self._select_week(start_idx)
 		self._set_status(f"{len(self.weeks)} week(s) loaded", C["accent"])
 
 	def _select_week(self, idx: int):
@@ -408,6 +455,11 @@ class LyceumRunner(tk.Tk):
 				btn.config(bg=C["panel"], fg=C["text_dim"], font=F["ui"])
 
 		week = self.weeks[idx]
+
+		# persist last-used tab
+		self._last_tab_key = week["path"].stem
+		self.all_results["_last_tab"] = self._last_tab_key
+		save_results(self.all_results)
 
 		if week.get("error"):
 			self.mission_lbl.config(text="LOAD ERROR")
@@ -583,6 +635,10 @@ class LyceumRunner(tk.Tk):
 		if week.get("error"):
 			return
 
+		# remember which challenge was filtered so we can restore it after
+		_preserved_filter = self._filter_ch
+		_preserved_row = self._sel_ch_row
+
 		self._lock_buttons("  Running…")
 		self._set_status("running tests…", C["warn"])
 		self._out_buf = []
@@ -591,11 +647,13 @@ class LyceumRunner(tk.Tk):
 
 		def worker():
 			results = run_static_challenges(week)
-			self.after(0, lambda: self._show_static_results(week, results))
+			self.after(0, lambda: self._show_static_results(
+				week, results, _preserved_filter, _preserved_row))
 
 		threading.Thread(target=worker, daemon=True).start()
 
-	def _show_static_results(self, week: dict, results: list):
+	def _show_static_results(self, week: dict, results: list,
+	                         restore_filter=None, restore_row=None):
 		meta = week["meta"]
 		week_key = week["path"].stem
 		now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -628,9 +686,12 @@ class LyceumRunner(tk.Tk):
 			for t in ch["tests"]:
 				if t["error"]:
 					self._buf("fail", f"  ✗  {t['call']}", cid=ch_id)
-					# show the most useful traceback lines (skip frames inside runner)
 					for ln in t["error"].strip().splitlines()[-5:]:
 						self._buf("error", f"     {ln}", cid=ch_id)
+				elif t.get("interactive_log"):
+					# render each line emitted by the interactive runner
+					for (tag, text) in t["interactive_log"]:
+						self._buf(tag, f"  {text}", cid=ch_id)
 				elif t["passed"]:
 					note = f"  ({t['note']})" if t["note"] else ""
 					self._buf("pass",
@@ -661,6 +722,22 @@ class LyceumRunner(tk.Tk):
 			self._buf("pass", f"\n  ALL CHALLENGES PASSED  ({passed_ch}/{total_ch})\n")
 		else:
 			self._buf("warn", f"\n  {passed_ch}/{total_ch} challenges fully passed\n")
+
+		# restore challenge filter if one was active before the run
+		if restore_filter:
+			self._filter_ch = restore_filter
+			self._sel_ch_row = restore_row
+			title = restore_filter
+			if self.current_week is not None:
+				for ch in getattr(self.weeks[self.current_week]["module"],
+				                  "CHALLENGES", []):
+					if ch.get("id") == restore_filter:
+						title = ch.get("title", restore_filter)
+						break
+			self._filter_lbl.config(text=f"  showing: {title}  ")
+			self._clear_filter_btn.pack(side="left")
+			if restore_row:
+				self._row_hover(restore_row, True)
 
 		self._render_filtered()
 
