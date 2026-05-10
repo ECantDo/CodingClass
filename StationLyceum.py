@@ -63,6 +63,24 @@ F = {
 }
 
 
+# ── button helper (forces colour on macOS / iOS where tk.Button ignores bg) ──
+
+def _styled_btn(parent, text, bg, fg, active_bg, active_fg,
+                font, command=None, padx=12, pady=0, cursor="hand2",
+                side=None, pack_padx=0, pack_pady=0, anchor="center"):
+	"""
+	Returns a tk.Label styled as a button.
+	tk.Button on Aqua (macOS/iOS) ignores bg/fg; Labels always respect them.
+	"""
+	lbl = tk.Label(parent, text=text, bg=bg, fg=fg, font=font,
+	               padx=padx, pady=pady, cursor=cursor, anchor=anchor)
+	if command:
+		lbl.bind("<Button-1>", lambda e: command())
+	lbl.bind("<Enter>", lambda e: lbl.config(bg=active_bg, fg=active_fg))
+	lbl.bind("<Leave>", lambda e: lbl.config(bg=bg, fg=fg))
+	return lbl
+
+
 # ── week discovery ────────────────────────────────────────────────────────────
 
 def load_week_module(path: Path):
@@ -262,18 +280,50 @@ class LyceumRunner(tk.Tk):
 		                           fg=C["accent"], font=F["ui_s"])
 		self.status_lbl.pack(side="left", pady=12)
 
-		tk.Button(top, text="↺  Refresh weeks",
-		          bg=C["panel"], fg=C["text_dim"],
-		          activebackground=C["border"], activeforeground=C["text"],
-		          relief="flat", cursor="hand2", font=F["ui_s"],
-		          command=self._refresh_weeks, padx=12
-		          ).pack(side="right", pady=10, padx=12)
+		_styled_btn(top, "↺  Refresh weeks",
+		            bg=C["panel"], fg=C["text_dim"],
+		            active_bg=C["border"], active_fg=C["text"],
+		            font=F["ui_s"], command=self._refresh_weeks,
+		            padx=12, pady=5
+		            ).pack(side="right", pady=10, padx=12)
 
 		tk.Frame(self, bg=C["border"], height=1).pack(fill="x")
 
-		# week tab row
-		self.tab_row = tk.Frame(self, bg=C["panel"])
-		self.tab_row.pack(fill="x")
+		# week tab row — horizontally scrollable so tabs never squish
+		tab_outer = tk.Frame(self, bg=C["panel"])
+		tab_outer.pack(fill="x")
+
+		self._tab_canvas = tk.Canvas(tab_outer, bg=C["panel"],
+		                             height=42, highlightthickness=0)
+		self._tab_canvas.pack(fill="x", expand=True, side="top")
+
+		tab_hscroll = tk.Scrollbar(tab_outer, orient="horizontal",
+		                           command=self._tab_canvas.xview,
+		                           bg=C["panel"], troughcolor=C["panel"],
+		                           highlightthickness=0)
+		# only show scrollbar when it's actually needed (packed in _refresh_weeks)
+		self._tab_hscroll = tab_hscroll
+		self._tab_canvas.configure(xscrollcommand=tab_hscroll.set)
+
+		self.tab_row = tk.Frame(self._tab_canvas, bg=C["panel"])
+		self._tab_win = self._tab_canvas.create_window(
+			(0, 0), window=self.tab_row, anchor="nw")
+
+		def _on_tab_frame_configure(e):
+			self._tab_canvas.configure(
+				scrollregion=self._tab_canvas.bbox("all"))
+			# show scrollbar only when content wider than canvas
+			if self.tab_row.winfo_reqwidth() > self._tab_canvas.winfo_width():
+				self._tab_hscroll.pack(fill="x", side="top")
+			else:
+				self._tab_hscroll.pack_forget()
+
+		self.tab_row.bind("<Configure>", _on_tab_frame_configure)
+		# allow mouse-wheel / trackpad horizontal scroll on the tab row
+		self._tab_canvas.bind("<MouseWheel>",
+		                      lambda e: self._tab_canvas.xview_scroll(-1 * (e.delta // 120), "units"))
+		self._tab_canvas.bind("<Shift-MouseWheel>",
+		                      lambda e: self._tab_canvas.xview_scroll(-1 * (e.delta // 120), "units"))
 		tk.Frame(self, bg=C["border"], height=1).pack(fill="x")
 
 		# body
@@ -322,12 +372,11 @@ class LyceumRunner(tk.Tk):
 		self._filter_lbl = tk.Label(self._filter_frame, text="",
 		                            bg=C["panel"], fg=C["info"], font=F["ui_s"])
 		self._filter_lbl.pack(side="left")
-		self._clear_filter_btn = tk.Button(
-			self._filter_frame, text="✕ show all",
+		self._clear_filter_btn = _styled_btn(
+			self._filter_frame, "✕ show all",
 			bg=C["panel"], fg=C["text_dim"],
-			activebackground=C["border"], activeforeground=C["text"],
-			relief="flat", cursor="hand2", font=("Helvetica", 9),
-			command=self._clear_filter, padx=6)
+			active_bg=C["border"], active_fg=C["text"],
+			font=("Helvetica", 9), command=self._clear_filter, padx=6)
 		# shown on demand via pack()
 
 		self.timestamp_lbl = tk.Label(out_hdr, text="", bg=C["panel"],
@@ -335,7 +384,17 @@ class LyceumRunner(tk.Tk):
 		self.timestamp_lbl.pack(side="right")
 		tk.Frame(right, bg=C["border"], height=1).pack(fill="x")
 
-		# output text
+		# ── run bar (bottom) ──
+		# Pack BEFORE out_wrap so tkinter reserves its height first.
+		# If out_wrap is packed first with expand=True, it grabs all remaining
+		# space and the run bar gets pushed off-screen at small window sizes.
+		tk.Frame(right, bg=C["border"], height=1).pack(fill="x", side="bottom")
+
+		run_bar = tk.Frame(right, bg=C["panel"], height=52)
+		run_bar.pack(fill="x", side="bottom")
+		run_bar.pack_propagate(False)
+
+		# output text (packed after run bar so it only fills what's left)
 		out_wrap = tk.Frame(right, bg=C["bg"])
 		out_wrap.pack(fill="both", expand=True)
 
@@ -365,29 +424,20 @@ class LyceumRunner(tk.Tk):
 		]:
 			self.output_text.tag_config(tag, foreground=fg, **extra)
 
-		# ── run bar (bottom) ──
-		tk.Frame(right, bg=C["border"], height=1).pack(fill="x", side="bottom")
-
-		run_bar = tk.Frame(right, bg=C["panel"], height=52)
-		run_bar.pack(fill="x", side="bottom")
-		run_bar.pack_propagate(False)
-
-		self.run_btn = tk.Button(
-			run_bar, text="▶   RUN TESTS",
+		self.run_btn = _styled_btn(
+			run_bar, "▶   RUN TESTS",
 			bg=C["accent_dim"], fg=C["text_bright"],
-			activebackground=C["accent"], activeforeground=C["bg"],
-			relief="flat", cursor="hand2",
-			font=("Helvetica", 12, "bold"), padx=28,
+			active_bg=C["accent"], active_fg=C["bg"],
+			font=("Helvetica", 12, "bold"), padx=28, pady=10,
 			command=self._run_static)
 		self.run_btn.pack(side="left", padx=16, pady=10)
 
 		# interactive button — shown only when week defines run_interactive()
-		self.interactive_btn = tk.Button(
-			run_bar, text="⚡  RUN SCRIPT",
+		self.interactive_btn = _styled_btn(
+			run_bar, "⚡  RUN SCRIPT",
 			bg=C["panel"], fg=C["purple"],
-			activebackground=C["panel2"], activeforeground=C["purple"],
-			relief="flat", cursor="hand2",
-			font=("Helvetica", 12, "bold"), padx=28,
+			active_bg=C["panel2"], active_fg=C["purple"],
+			font=("Helvetica", 12, "bold"), padx=28, pady=10,
 			command=self._run_interactive)
 		# packed on demand
 
@@ -395,12 +445,11 @@ class LyceumRunner(tk.Tk):
 		                             fg=C["text_dim"], font=F["ui_s"])
 		self.progress_lbl.pack(side="left", pady=10)
 
-		tk.Button(run_bar, text="Clear output",
-		          bg=C["panel"], fg=C["text_dim"],
-		          activebackground=C["border"], activeforeground=C["text"],
-		          relief="flat", cursor="hand2", font=F["ui_s"],
-		          command=self._user_clear, padx=12
-		          ).pack(side="right", padx=16, pady=10)
+		_styled_btn(run_bar, "Clear output",
+		            bg=C["panel"], fg=C["text_dim"],
+		            active_bg=C["border"], active_fg=C["text"],
+		            font=F["ui_s"], command=self._user_clear, padx=12, pady=10
+		            ).pack(side="right", padx=16, pady=10)
 
 	# ─── week tabs ────────────────────────────────────────────────────────────
 
@@ -422,12 +471,11 @@ class LyceumRunner(tk.Tk):
 			meta = (week.get("meta") or {})
 			label = meta.get("tab_label", week["path"].stem)
 			color = C["danger"] if week.get("error") else C["text_dim"]
-			btn = tk.Button(
-				self.tab_row, text=label,
+			btn = _styled_btn(
+				self.tab_row, label,
 				bg=C["panel"], fg=color,
-				activebackground=C["panel2"], activeforeground=C["text"],
-				relief="flat", cursor="hand2", font=F["ui"],
-				padx=16, pady=10,
+				active_bg=C["panel2"], active_fg=C["text"],
+				font=F["ui"], padx=16, pady=10,
 				command=lambda idx=i: self._select_week(idx))
 			btn.pack(side="left")
 			self._tab_btns.append(btn)
@@ -855,15 +903,23 @@ class LyceumRunner(tk.Tk):
 
 	def _lock_buttons(self, label: str, interactive: bool = False):
 		if interactive:
-			self.interactive_btn.config(state="disabled", text=label)
-			self.run_btn.config(state="disabled")
+			self.interactive_btn.config(text=label, fg=C["muted"], cursor="")
+			self.interactive_btn.unbind("<Button-1>")
+			self.run_btn.config(fg=C["muted"], cursor="")
+			self.run_btn.unbind("<Button-1>")
 		else:
-			self.run_btn.config(state="disabled", text=label)
-			self.interactive_btn.config(state="disabled")
+			self.run_btn.config(text=label, fg=C["muted"], cursor="")
+			self.run_btn.unbind("<Button-1>")
+			self.interactive_btn.config(fg=C["muted"], cursor="")
+			self.interactive_btn.unbind("<Button-1>")
 
 	def _unlock_buttons(self):
-		self.run_btn.config(state="normal", text="▶   RUN TESTS")
-		self.interactive_btn.config(state="normal", text="⚡  RUN SCRIPT")
+		self.run_btn.config(text="▶   RUN TESTS",
+		                    fg=C["text_bright"], cursor="hand2")
+		self.run_btn.bind("<Button-1>", lambda e: self._run_static())
+		self.interactive_btn.config(text="⚡  RUN SCRIPT",
+		                            fg=C["purple"], cursor="hand2")
+		self.interactive_btn.bind("<Button-1>", lambda e: self._run_interactive())
 
 	def _set_status(self, text: str, color: str = None):
 		self.status_lbl.config(text=f"● {text}", fg=color or C["accent"])
