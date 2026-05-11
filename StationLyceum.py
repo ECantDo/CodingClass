@@ -71,7 +71,8 @@ def check_forbidden(student_mod, func_name: str, banned: list) -> tuple:
 		return False, [("fail", f"'{func_name}' not found in submission")]
 
 	try:
-		source = inspect.getsource(func)
+		source_lines_raw, start_lineno = inspect.getsourcelines(func)
+		source = "".join(source_lines_raw)
 	except OSError:
 		return False, [("warn",
 		                f"Could not read source of '{func_name}' — skipping forbidden check")]
@@ -81,19 +82,30 @@ def check_forbidden(student_mod, func_name: str, banned: list) -> tuple:
 	except SyntaxError as e:
 		return False, [("fail", f"Syntax error parsing {func_name}: {e}")]
 
-	banned_set = set(banned)
+	banned_funcs = set()
+	banned_nodes = set()
+	for item in banned:
+		if isinstance(item, str):
+			banned_funcs.add(item)
+		elif isinstance(item, type) and issubclass(item, ast.AST):
+			banned_nodes.add(item)
 	# Collect every function call name that appears in the AST.
 	# ast.Call nodes have a .func that is either:
 	#   ast.Name  — a plain call like sorted(...)
 	#   ast.Attribute — a method call like my_list.sort(...)
 	hits: dict = {}  # name -> list of line numbers
 	for node in ast.walk(tree):
-		if not isinstance(node, ast.Call):
-			continue
-		if isinstance(node.func, ast.Name) and node.func.id in banned_set:
-			hits.setdefault(node.func.id, []).append(node.lineno)
-		elif isinstance(node.func, ast.Attribute) and node.func.attr in banned_set:
-			hits.setdefault(node.func.attr, []).append(node.lineno)
+		# Check banned node types (e.g. ast.For, ast.While)
+		for node_type in banned_nodes:
+			if isinstance(node, node_type):
+				hits.setdefault(node_type.__name__, []).append(node.lineno)
+
+		# Check banned function calls
+		if isinstance(node, ast.Call):
+			if isinstance(node.func, ast.Name) and node.func.id in banned_funcs:
+				hits.setdefault(node.func.id, []).append(node.lineno)
+			elif isinstance(node.func, ast.Attribute) and node.func.attr in banned_funcs:
+				hits.setdefault(node.func.attr, []).append(node.lineno)
 
 	source_lines = source.splitlines()
 	clean = True
