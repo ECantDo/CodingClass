@@ -21,6 +21,7 @@ Source inspection utility (importable from week files):
 import tkinter as tk
 import importlib.util
 import inspect
+import textwrap
 import sys
 import io
 import json
@@ -76,7 +77,7 @@ def check_forbidden(student_mod, func_name: str, banned: list) -> tuple:
 		                f"Could not read source of '{func_name}' — skipping forbidden check")]
 
 	try:
-		tree = ast.parse(inspect.cleandoc(source))
+		tree = ast.parse(textwrap.dedent(source))
 	except SyntaxError as e:
 		return False, [("fail", f"Syntax error parsing {func_name}: {e}")]
 
