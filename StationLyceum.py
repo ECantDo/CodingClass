@@ -11,10 +11,16 @@ Folder layout:
 Week files support two modes (or both together):
     CHALLENGES      list of static test cases  (run by ▶ RUN TESTS)
     run_interactive(student_module, log)        teacher script (run by ⚡ RUN SCRIPT)
+
+Source inspection utility (importable from week files):
+    check_forbidden(student_mod, func_name, banned) -> (passed: bool, log: list[tuple])
+    Checks that the named function contains none of the banned call patterns.
+    Returns a (bool, [(tag, text), ...]) pair ready to use in interactive_log or log_fn.
 """
 
 import tkinter as tk
 import importlib.util
+import inspect
 import sys
 import io
 import json
@@ -32,6 +38,78 @@ RESULTS_FILE = BASE_DIR / "results.json"
 
 for _d in (WEEKS_DIR, SUBMIT_DIR):
 	_d.mkdir(exist_ok=True)
+
+
+# ── source inspection ─────────────────────────────────────────────────────────
+
+def check_forbidden(student_mod, func_name: str, banned: list) -> tuple:
+	"""
+	Inspect the source of student_mod.func_name for forbidden function calls
+	using the AST — immune to false positives from comments and string literals.
+
+	Usage in a week file runner:
+	    passed, log = check_forbidden(student_mod, "sort_manifest", ["sort", "sorted"])
+	    # log is a list of (tag, text) tuples ready for interactive_log / log_fn
+
+	Parameters:
+	    student_mod   the loaded student module (as passed to run_interactive or runner())
+	    func_name     name of the function to inspect (string)
+	    banned        list of bare function names to forbid, e.g. ["sort", "sorted"]
+
+	Returns:
+	    (passed: bool, log: list[tuple[str, str]])
+	    passed  — True if none of the banned calls were found
+	    log     — list of (tag, text) pairs; tags match the station palette:
+	              "pass", "fail", "muted"
+	"""
+	import ast
+
+	log = []
+	func = getattr(student_mod, func_name, None)
+	if func is None:
+		return False, [("fail", f"'{func_name}' not found in submission")]
+
+	try:
+		source = inspect.getsource(func)
+	except OSError:
+		return False, [("warn",
+		                f"Could not read source of '{func_name}' — skipping forbidden check")]
+
+	try:
+		tree = ast.parse(inspect.cleandoc(source))
+	except SyntaxError as e:
+		return False, [("fail", f"Syntax error parsing {func_name}: {e}")]
+
+	banned_set = set(banned)
+	# Collect every function call name that appears in the AST.
+	# ast.Call nodes have a .func that is either:
+	#   ast.Name  — a plain call like sorted(...)
+	#   ast.Attribute — a method call like my_list.sort(...)
+	hits: dict = {}  # name -> list of line numbers
+	for node in ast.walk(tree):
+		if not isinstance(node, ast.Call):
+			continue
+		if isinstance(node.func, ast.Name) and node.func.id in banned_set:
+			hits.setdefault(node.func.id, []).append(node.lineno)
+		elif isinstance(node.func, ast.Attribute) and node.func.attr in banned_set:
+			hits.setdefault(node.func.attr, []).append(node.lineno)
+
+	source_lines = source.splitlines()
+	clean = True
+	for name in banned:
+		if name in hits:
+			clean = False
+			lines = hits[name]
+			log.append(("fail", f"✗  Forbidden: {name}() found in {func_name}"))
+			for lineno in lines:
+				# lineno is relative to the start of the parsed snippet
+				src_line = source_lines[lineno - 1].strip() if lineno <= len(source_lines) else ""
+				log.append(("muted", f"   line {lineno}: {src_line}"))
+		else:
+			log.append(("pass", f"✓  {name}() not used — good"))
+
+	return clean, log
+
 
 # ── palette ───────────────────────────────────────────────────────────────────
 
@@ -210,9 +288,9 @@ def run_interactive_challenge(test: dict, student_mod, submit_name: str) -> dict
 	"""
 	Runs a challenge test marked with is_interactive_test=True.
 	The test must supply a 'runner' callable:
-	    runner(student_func) -> (passed: bool, log_lines: list[tuple[tag, text]])
-	This lets week files define fully custom logic (e.g. crack()) while still
-	plugging into the normal CHALLENGES / sidebar / filter system.
+	    runner(student_func, student_mod) -> (passed: bool, log_lines: list[tuple[tag, text]])
+	Both the function and the full module are passed so runners can use
+	check_forbidden() or inspect other functions on the module directly.
 	"""
 	t = {
 		"call": test.get("call", ""),
@@ -232,7 +310,7 @@ def run_interactive_challenge(test: dict, student_mod, submit_name: str) -> dict
 		t["error"] = "test is missing a 'runner' callable — check the week file"
 		return t
 	try:
-		passed, log_lines = runner(func)
+		passed, log_lines = runner(func, student_mod)
 		t["passed"] = passed
 		t["interactive_log"] = log_lines
 	except Exception:
