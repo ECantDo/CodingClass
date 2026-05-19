@@ -259,11 +259,13 @@ def run_one_test(test: dict, student_mod, submit_name: str) -> dict:
 	return t
 
 
-def run_static_challenges(week: dict) -> list:
+def run_static_challenges(week: dict, only_id: str = None) -> list:
 	submit_path = SUBMIT_DIR / week["meta"].get("submission_file", "unknown.py")
 	student_mod, err = load_student(submit_path)
 	results = []
 	for ch in getattr(week["module"], "CHALLENGES", []):
+		if only_id is not None and ch.get("id", ch.get("title", "?")) != only_id:
+			continue
 		r = {
 			"id": ch.get("id", "?"),
 			"title": ch.get("title", "Unnamed"),
@@ -748,6 +750,8 @@ class LyceumRunner(tk.Tk):
 		self._filter_lbl.config(text=f"  showing: {title}  ")
 		self._clear_filter_btn.pack(side="left")
 		self._render_filtered()
+		# update run button to signal it will only run this challenge
+		self.run_btn.config(text="▶   RUN THIS CHALLENGE")
 
 	def _clear_filter(self, render: bool = True):
 		if self._sel_ch_row:
@@ -756,6 +760,7 @@ class LyceumRunner(tk.Tk):
 		self._filter_ch = None
 		self._filter_lbl.config(text="")
 		self._clear_filter_btn.pack_forget()
+		self.run_btn.config(text="▶   RUN TESTS")
 		if render:
 			self._render_filtered()
 
@@ -777,25 +782,30 @@ class LyceumRunner(tk.Tk):
 		if week.get("error"):
 			return
 
-		# remember which challenge was filtered so we can restore it after
+		# capture current filter — if set, only run that one challenge
+		_only_id = self._filter_ch
 		_preserved_filter = self._filter_ch
 		_preserved_row = self._sel_ch_row
 
-		self._lock_buttons("  Running…")
-		self._set_status("running tests…", C["warn"])
+		label = "  Running…" if _only_id is None else "  Running challenge…"
+		self._lock_buttons(label)
+		status = "running tests…" if _only_id is None else "running selected challenge…"
+		self._set_status(status, C["warn"])
 		self._out_buf = []
 		self._clear_filter(render=False)
 		self._wipe_output()
 
 		def worker():
-			results = run_static_challenges(week)
+			results = run_static_challenges(week, only_id=_only_id)
 			self.after(0, lambda: self._show_static_results(
-				week, results, _preserved_filter, _preserved_row))
+				week, results, _preserved_filter, _preserved_row,
+				single_id=_only_id))
 
 		threading.Thread(target=worker, daemon=True).start()
 
 	def _show_static_results(self, week: dict, results: list,
-	                         restore_filter=None, restore_row=None):
+	                         restore_filter=None, restore_row=None,
+	                         single_id: str = None):
 		meta = week["meta"]
 		week_key = week["path"].stem
 		now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -805,7 +815,16 @@ class LyceumRunner(tk.Tk):
 		passed_ch = 0
 		ch_saved = {}
 
-		self._buf("heading", f"\n  {meta.get('title', week_key).upper()}")
+		# when running a single challenge, start from previously saved results
+		# so the sidebar and progress totals stay accurate for other challenges
+		existing = self.all_results.get(week_key, {})
+		if single_id is not None:
+			ch_saved = dict(existing.get("challenges", {}))
+
+		heading = meta.get('title', week_key).upper()
+		if single_id is not None:
+			heading += "  —  single challenge"
+		self._buf("heading", f"\n  {heading}")
 		self._buf("system", f"  {now}\n")
 
 		for ch in results:
@@ -860,10 +879,27 @@ class LyceumRunner(tk.Tk):
 			ch_saved[ch_id] = {"passed": ch["passed"], "total": ch["total"]}
 
 		self._buf("system", "  " + "─" * 48)
-		if passed_ch == total_ch > 0:
-			self._buf("pass", f"\n  ALL CHALLENGES PASSED  ({passed_ch}/{total_ch})\n")
+		if single_id is not None:
+			# single-challenge run: summarise just what was run
+			ch = results[0] if results else None
+			if ch and ch["passed"] == ch["total"] > 0:
+				self._buf("pass", f"\n  CHALLENGE PASSED  ({ch['passed']}/{ch['total']})\n")
+			elif ch:
+				self._buf("warn", f"\n  {ch['passed']}/{ch['total']} tests passed\n")
+			# compute overall totals from merged ch_saved for progress label
+			all_p = sum(v.get("passed", 0) for v in ch_saved.values())
+			all_t = sum(v.get("total", 0) for v in ch_saved.values())
+			passed_ch_overall = sum(
+				1 for v in ch_saved.values()
+				if v.get("total", 0) > 0 and v["passed"] == v["total"])
+			total_ch_overall = len(ch_saved)
 		else:
-			self._buf("warn", f"\n  {passed_ch}/{total_ch} challenges fully passed\n")
+			if passed_ch == total_ch > 0:
+				self._buf("pass", f"\n  ALL CHALLENGES PASSED  ({passed_ch}/{total_ch})\n")
+			else:
+				self._buf("warn", f"\n  {passed_ch}/{total_ch} challenges fully passed\n")
+			passed_ch_overall = passed_ch
+			total_ch_overall = total_ch
 
 		# restore challenge filter if one was active before the run
 		if restore_filter:
@@ -885,8 +921,8 @@ class LyceumRunner(tk.Tk):
 
 		self.all_results[week_key] = {
 			"timestamp": now,
-			"passed": passed_ch,
-			"total": total_ch,
+			"passed": passed_ch_overall,
+			"total": total_ch_overall,
 			"challenges": ch_saved,
 		}
 		save_results(self.all_results)
@@ -894,8 +930,8 @@ class LyceumRunner(tk.Tk):
 		self._update_progress(week_key)
 		self._unlock_buttons()
 		self._set_status(
-			f"{passed_ch}/{total_ch} challenges passed",
-			C["accent"] if passed_ch == total_ch else C["warn"])
+			f"{passed_ch_overall}/{total_ch_overall} challenges passed",
+			C["accent"] if passed_ch_overall == total_ch_overall else C["warn"])
 
 	# ─── interactive script run ───────────────────────────────────────────────
 
