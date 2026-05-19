@@ -109,17 +109,20 @@ def check_forbidden(student_mod, func_name: str, banned: list) -> tuple:
 
 	source_lines = source.splitlines()
 	clean = True
-	for name in banned:
-		if name in hits:
+	for item in banned:
+		key = item if isinstance(item, str) else item.__name__
+		if key in hits:
 			clean = False
-			lines = hits[name]
-			log.append(("fail", f"✗  Forbidden: {name}() found in {func_name}"))
+			lines = hits[key]
+			label = f"{key}()" if isinstance(item, str) else f"{key} loop" if key in ("For", "While") else key
+			log.append(("fail", f"✗  Forbidden: {label} found in {func_name}"))
 			for lineno in lines:
-				# lineno is relative to the start of the parsed snippet
+				actual_lineno = start_lineno + lineno - 1
 				src_line = source_lines[lineno - 1].strip() if lineno <= len(source_lines) else ""
-				log.append(("muted", f"   line {lineno}: {src_line}"))
+				log.append(("muted", f"   line {actual_lineno}: {src_line}"))
 		else:
-			log.append(("pass", f"✓  {name}() not used — good"))
+			label = f"{item.__name__} loop" if isinstance(item, type) else f"{item}()"
+			log.append(("pass", f"✓  {label} not used — good"))
 
 	return clean, log
 
